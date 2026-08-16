@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#05060a" />
+    <title>Pomodoro Timer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        min-height: 100vh;
+        background: #05060a;
+        overflow: hidden;
+      }
+      * {
+        box-sizing: border-box;
+      }
+    </style>
+
+    <!-- React 18 (UMD globals: React, ReactDOM) -->
+    <script
+      crossorigin
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+    ></script>
+    <script
+      crossorigin
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+    ></script>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- Background image (sets window.FANTASY_BG) -->
+    <script src="fantasy-bg.js"></script>
+
+    <!-- Precompiled app (no Babel needed) -->
+    <script src="app.js"></script>
+  </body>
+</html>
