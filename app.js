@@ -542,32 +542,55 @@
       return /* @__PURE__ */ React.createElement("div", { key: task.name, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 10px", borderBottom: i !== data.taskBreakdown.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: 999, background: TASK_DOT_COLORS[i % TASK_DOT_COLORS.length], flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, task.name), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, height: 4, borderRadius: 999, background: "rgba(255,255,255,0.06)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { width: `${pct}%`, height: "100%", background: TASK_DOT_COLORS[i % TASK_DOT_COLORS.length] } }))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: accentHex, flexShrink: 0 } }, formatMinutes(task.time)));
     }))));
   }
+  var STORAGE_KEY = "pomodoro-app-v1";
+  var DEFAULT_SETTINGS = {
+    durations: { focus: 25, short: 5, long: 15 },
+    autoStartBreaks: false,
+    autoStartFocus: false,
+    alarmSound: "digital",
+    alarmVolume: 0.6,
+    background: "fantasy",
+    customBackgroundUrl: null,
+    accent: "green",
+    ambient: "off",
+    ambientSound: false,
+    ambientVolume: 0.35
+  };
+  function loadStore() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  }
+  function saveStore(data) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+    }
+  }
   function PomodoroApp() {
-    const [settings, setSettings] = useState({
-      durations: { focus: 25, short: 5, long: 15 },
-      autoStartBreaks: false,
-      autoStartFocus: false,
-      alarmSound: "digital",
-      alarmVolume: 0.6,
-      background: "fantasy",
-      customBackgroundUrl: null,
-      accent: "green",
-      ambient: "off",
-      ambientSound: false,
-      ambientVolume: 0.35
-    });
+    const saved = useMemo(() => loadStore(), []);
+    const [settings, setSettings] = useState(() => ({
+      ...DEFAULT_SETTINGS,
+      ...saved?.settings || {},
+      durations: { ...DEFAULT_SETTINGS.durations, ...saved?.settings?.durations || {} }
+    }));
     const [mode, setMode] = useState("focus");
-    const [timeLeft, setTimeLeft] = useState(settings.durations.focus * 60);
+    const [timeLeft, setTimeLeft] = useState(() => (saved?.settings?.durations?.focus || DEFAULT_SETTINGS.durations.focus) * 60);
     const [isRunning, setIsRunning] = useState(false);
-    const [counts, setCounts] = useState({ focus: 0, short: 0, long: 0 });
-    const [streak, setStreak] = useState(0);
-    const [tasks, setTasks] = useState([
-      { id: "t1", name: "Complete half o...", done: false, color: TASK_DOT_COLORS[0], loggedMinutes: 0 },
-      { id: "t2", name: "GOC complete ti...", done: false, color: TASK_DOT_COLORS[1], loggedMinutes: 0 },
-      { id: "t3", name: "Relations and Functions", done: false, color: TASK_DOT_COLORS[2], loggedMinutes: 0 }
-    ]);
-    const [activeTaskId, setActiveTaskId] = useState("t3");
-    const [sessions, setSessions] = useState([]);
+    const [counts, setCounts] = useState(() => saved?.counts || { focus: 0, short: 0, long: 0 });
+    const [streak, setStreak] = useState(() => saved?.streak || 0);
+    const [tasks, setTasks] = useState(() => Array.isArray(saved?.tasks) ? saved.tasks : []);
+    const [activeTaskId, setActiveTaskId] = useState(() => {
+      if (saved?.activeTaskId && Array.isArray(saved?.tasks) && saved.tasks.some((t) => t.id === saved.activeTaskId)) {
+        return saved.activeTaskId;
+      }
+      return null;
+    });
+    const [sessions, setSessions] = useState(() => Array.isArray(saved?.sessions) ? saved.sessions : []);
     const [showSettings, setShowSettings] = useState(false);
     const [showTasks, setShowTasks] = useState(true);
     const [showMusic, setShowMusic] = useState(false);
@@ -578,7 +601,7 @@
     const [isPlaying, setIsPlaying] = useState(false);
     const [loop, setLoop] = useState(true);
     const audioRef = useRef(null);
-    const [dailyGoal, setDailyGoal] = useState(null);
+    const [dailyGoal, setDailyGoal] = useState(() => typeof saved?.dailyGoal === "number" ? saved.dailyGoal : null);
     const notifSupported = typeof window !== "undefined" && "Notification" in window;
     const [notifPermission, setNotifPermission] = useState(notifSupported ? Notification.permission : "unsupported");
     const intervalRef = useRef(null);
@@ -590,6 +613,17 @@
       const now = /* @__PURE__ */ new Date();
       return sessions.filter((s) => isSameDay(new Date(s.timestamp), now)).reduce((a, s) => a + s.durationMinutes, 0);
     }, [sessions]);
+    useEffect(() => {
+      saveStore({
+        settings,
+        tasks,
+        activeTaskId,
+        sessions,
+        counts,
+        streak,
+        dailyGoal
+      });
+    }, [settings, tasks, activeTaskId, sessions, counts, streak, dailyGoal]);
     useEffect(() => {
       if (audioRef.current) audioRef.current.loop = loop;
     }, [loop]);
