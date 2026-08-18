@@ -605,6 +605,7 @@
     const notifSupported = typeof window !== "undefined" && "Notification" in window;
     const [notifPermission, setNotifPermission] = useState(notifSupported ? Notification.permission : "unsupported");
     const intervalRef = useRef(null);
+    const endTimeRef = useRef(null);
     const activeTask = tasks.find((t) => t.id === activeTaskId);
     const accentHex = ACCENTS.find((a) => a.key === settings.accent)?.hex || "#3ecf8e";
     const totalForMode = settings.durations[mode] * 60;
@@ -695,7 +696,13 @@
           nextMode = "focus";
         }
         const willAutoStart = nextMode === "focus" ? settings.autoStartFocus : settings.autoStartBreaks;
-        setTimeLeft(settings.durations[nextMode] * 60);
+        const nextSeconds = settings.durations[nextMode] * 60;
+        setTimeLeft(nextSeconds);
+        if (willAutoStart) {
+          endTimeRef.current = Date.now() + nextSeconds * 1000;
+        } else {
+          endTimeRef.current = null;
+        }
         setIsRunning(willAutoStart);
         return nextMode;
       });
@@ -703,24 +710,61 @@
     useEffect(() => {
       if (!isRunning) {
         clearInterval(intervalRef.current);
+        endTimeRef.current = null;
         return;
       }
-      intervalRef.current = setInterval(() => {
-        setTimeLeft((t) => {
-          if (t <= 1) {
-            clearInterval(intervalRef.current);
-            setTimeout(() => completeSession(), 0);
-            return 0;
-          }
-          return t - 1;
-        });
-      }, 1e3);
-      return () => clearInterval(intervalRef.current);
-    }, [isRunning]);
+      if (endTimeRef.current == null) {
+        endTimeRef.current = Date.now() + timeLeft * 1000;
+      }
+      const tick = () => {
+        if (endTimeRef.current == null) return;
+        const remaining = Math.max(0, Math.round((endTimeRef.current - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        if (remaining <= 0) {
+          clearInterval(intervalRef.current);
+          endTimeRef.current = null;
+          setTimeout(() => completeSession(), 0);
+        }
+      };
+      tick();
+      intervalRef.current = setInterval(tick, 250);
+      const onVisibility = () => {
+        if (document.visibilityState === "visible") tick();
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      return () => {
+        clearInterval(intervalRef.current);
+        document.removeEventListener("visibilitychange", onVisibility);
+      };
+    }, [isRunning, completeSession]);
+    // Keep tab title in sync so the countdown is visible even when the tab is backgrounded
+    useEffect(() => {
+      const base = "Pomodoro Timer";
+      if (isRunning) {
+        document.title = `${formatTime(timeLeft)} \u2014 ${base}`;
+      } else {
+        document.title = base;
+      }
+      return () => {
+        document.title = base;
+      };
+    }, [timeLeft, isRunning]);
     const switchMode = (m) => {
       setIsRunning(false);
+      endTimeRef.current = null;
       setMode(m);
       setTimeLeft(settings.durations[m] * 60);
+    };
+    const toggleRunning = () => {
+      setIsRunning((r) => {
+        if (!r) {
+          // starting / resuming — anchor to wall clock so background tabs stay accurate
+          endTimeRef.current = Date.now() + timeLeft * 1000;
+        } else {
+          endTimeRef.current = null;
+        }
+        return !r;
+      });
     };
     const ringRadius = 132;
     const circumference = 2 * Math.PI * ringRadius;
@@ -757,7 +801,7 @@
       "button",
       {
         className: "pf-start-btn",
-        onClick: () => setIsRunning((r) => !r),
+        onClick: toggleRunning,
         style: { display: "flex", alignItems: "center", gap: 10, border: "none", cursor: "pointer", padding: "15px 46px", borderRadius: 999, fontSize: 14.5, fontWeight: 700, letterSpacing: 0.4, color: "#fff", marginTop: 32, background: `linear-gradient(135deg, ${accentHex}, ${accentHex}c8)`, boxShadow: `0 8px 22px ${accentHex}35` }
       },
       /* @__PURE__ */ React.createElement("span", { className: "sheen" }),
