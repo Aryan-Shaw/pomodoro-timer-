@@ -498,9 +498,32 @@
       d.setHours(0, 0, 0, 0);
       return d;
     });
+    const [selectedPeriod, setSelectedPeriod] = useState(null);
     const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const PERIOD_HOURS = [
+      { label: "Night", minH: 0, maxH: 6 },
+      { label: "Morning", minH: 6, maxH: 12 },
+      { label: "Afternoon", minH: 12, maxH: 18 },
+      { label: "Evening", minH: 18, maxH: 24 }
+    ];
+    const getWeeksInMonth = (year, month) => {
+      const first = new Date(year, month, 1);
+      const last = new Date(year, month + 1, 0);
+      const weeks = [];
+      let cur = new Date(first);
+      cur.setDate(cur.getDate() - cur.getDay());
+      cur.setHours(0, 0, 0, 0);
+      while (cur <= last) {
+        const start = new Date(cur);
+        const end = new Date(cur);
+        end.setDate(end.getDate() + 6);
+        weeks.push({ start, end });
+        cur.setDate(cur.getDate() + 7);
+      }
+      return weeks;
+    };
     const getRange = (anchor, tf) => {
       const from = new Date(anchor);
       from.setHours(0, 0, 0, 0);
@@ -535,16 +558,15 @@
       return `${MONTH_NAMES[from.getMonth()]} ${from.getFullYear()}`;
     }, [anchorDate, timeframe]);
     const shiftPeriod = (dir) => {
+      setSelectedPeriod(null);
       setAnchorDate((prev) => {
         const d = new Date(prev);
         d.setHours(0, 0, 0, 0);
         if (timeframe === "day") {
           d.setDate(d.getDate() + dir);
         } else if (timeframe === "week") {
-          // Snap to Sunday of current week, then move by full weeks
           d.setDate(d.getDate() - d.getDay() + dir * 7);
         } else {
-          // Always land on the 1st to avoid day overflow (e.g. Jan 31 → Feb)
           d.setDate(1);
           d.setMonth(d.getMonth() + dir);
         }
@@ -552,6 +574,7 @@
       });
     };
     const setTimeframeSafe = (tf) => {
+      setSelectedPeriod(null);
       setTimeframe(tf);
       setAnchorDate((prev) => {
         const d = new Date(prev);
@@ -564,33 +587,42 @@
         return d;
       });
     };
-    // Week chart bar → that exact day
     const onWeekDayClick = (dayIndex) => {
       const { from } = getRange(anchorDate, "week");
       const d = new Date(from);
       d.setDate(d.getDate() + dayIndex);
       d.setHours(0, 0, 0, 0);
+      setSelectedPeriod(null);
       setAnchorDate(d);
       setTimeframe("day");
     };
-    // Month chart bar (Wk 1–5) → calendar week that contains the start of that bucket
     const onMonthWeekClick = (weekIndex) => {
       const { from } = getRange(anchorDate, "month");
-      const lastDay = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
-      const dayOfMonth = Math.min(lastDay, 1 + weekIndex * 7);
-      const d = new Date(from.getFullYear(), from.getMonth(), dayOfMonth);
+      const weeks = getWeeksInMonth(from.getFullYear(), from.getMonth());
+      const w = weeks[weekIndex];
+      if (!w) return;
+      const d = new Date(w.start);
       d.setHours(0, 0, 0, 0);
-      // Snap to Sunday of that week so the week range is correct
-      d.setDate(d.getDate() - d.getDay());
+      setSelectedPeriod(null);
       setAnchorDate(d);
       setTimeframe("week");
     };
+    const onDayPeriodClick = (periodIndex) => {
+      setSelectedPeriod((prev) => prev === periodIndex ? null : periodIndex);
+    };
     const data = useMemo(() => {
       const { from, to } = getRange(anchorDate, timeframe);
-      const filtered = sessions.filter((s) => {
+      let filtered = sessions.filter((s) => {
         const t = new Date(s.timestamp);
         return t >= from && t < to;
       });
+      if (timeframe === "day" && selectedPeriod != null) {
+        const p = PERIOD_HOURS[selectedPeriod];
+        filtered = filtered.filter((s) => {
+          const h = new Date(s.timestamp).getHours();
+          return h >= p.minH && h < p.maxH;
+        });
+      }
       const taskTotals = filtered.reduce((acc, s) => {
         acc[s.taskName] = (acc[s.taskName] || 0) + s.durationMinutes;
         return acc;
@@ -598,9 +630,12 @@
       const totalMinutes = Object.values(taskTotals).reduce((a, b) => a + b, 0);
       let buckets;
       if (timeframe === "day") {
-        // Night covers midnight / early hours (12am–6am)
-        buckets = ["Night", "Morning", "Afternoon", "Evening"].map((label) => ({ label, minutes: 0 }));
-        filtered.forEach((s) => {
+        const allDayFiltered = sessions.filter((s) => {
+          const t = new Date(s.timestamp);
+          return t >= from && t < to;
+        });
+        buckets = PERIOD_HOURS.map((p) => ({ label: p.label, minutes: 0 }));
+        allDayFiltered.forEach((s) => {
           const h = new Date(s.timestamp).getHours();
           const idx = h < 6 ? 0 : h < 12 ? 1 : h < 18 ? 2 : 3;
           buckets[idx].minutes += s.durationMinutes;
@@ -609,10 +644,20 @@
         buckets = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => ({ label, minutes: 0 }));
         filtered.forEach((s) => buckets[new Date(s.timestamp).getDay()].minutes += s.durationMinutes);
       } else {
-        buckets = Array.from({ length: 5 }, (_, i) => ({ label: `Wk ${i + 1}`, minutes: 0 }));
+        const weeks = getWeeksInMonth(from.getFullYear(), from.getMonth());
+        buckets = weeks.map((w, i) => ({ label: `Wk ${i + 1}`, minutes: 0, weekStart: w.start }));
         filtered.forEach((s) => {
-          const idx = Math.min(4, Math.floor((new Date(s.timestamp).getDate() - 1) / 7));
-          buckets[idx].minutes += s.durationMinutes;
+          const t = new Date(s.timestamp);
+          t.setHours(0, 0, 0, 0);
+          for (let i = 0; i < weeks.length; i++) {
+            const ws = weeks[i].start;
+            const we = new Date(weeks[i].end);
+            we.setHours(23, 59, 59, 999);
+            if (t >= ws && t <= we) {
+              buckets[i].minutes += s.durationMinutes;
+              break;
+            }
+          }
         });
       }
       return {
@@ -620,12 +665,17 @@
         totalMinutes,
         sessionCount: filtered.length,
         taskBreakdown: Object.entries(taskTotals).map(([name, time]) => ({ name, time })).sort((a, b) => b.time - a.time),
-        buckets
+        buckets,
+        periodFilterLabel: selectedPeriod != null ? PERIOD_HOURS[selectedPeriod].label : null
       };
-    }, [sessions, timeframe, anchorDate]);
+    }, [sessions, timeframe, anchorDate, selectedPeriod]);
     const maxMinutes = Math.max(1, ...data.buckets.map((b) => b.minutes));
-    const barsClickable = timeframe === "week" || timeframe === "month";
-    return /* @__PURE__ */ React.createElement("div", { className: "pf-scroll", style: { position: "absolute", inset: 0, background: "#0a0a0b", color: "#fff", overflowY: "auto", zIndex: 50 } }, /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 720, margin: "0 auto", padding: "26px 20px 60px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: onBack, style: { ...pillMiniBtn, width: 34, height: 34, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ArrowLeft, { size: 16 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700 } }, "Progress"), /* @__PURE__ */ React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 4, ...GLASS_RAISED, borderRadius: 999, padding: 4 } }, ["day", "week", "month"].map((t) => /* @__PURE__ */ React.createElement("button", { key: t, onClick: () => setTimeframeSafe(t), style: { border: "none", cursor: "pointer", padding: "6px 15px", borderRadius: 999, fontSize: 12, fontWeight: 600, textTransform: "capitalize", color: timeframe === t ? "#04140d" : "rgba(255,255,255,0.6)", background: timeframe === t ? accentHex : "transparent" } }, t)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: () => shiftPeriod(-1), title: "Previous", style: { ...pillMiniBtn, width: 32, height: 32, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ChevronLeft, { size: 16 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, color: "rgba(255,255,255,0.85)", minWidth: 180, textAlign: "center", fontVariantNumeric: "tabular-nums" } }, periodLabel), /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: () => shiftPeriod(1), title: "Next", style: { ...pillMiniBtn, width: 32, height: 32, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ChevronRight, { size: 16 }))), /* @__PURE__ */ React.createElement("div", { style: { ...GLASS, borderRadius: 18, padding: "20px 22px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 } }, "Total focus time"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 36, fontWeight: 800, letterSpacing: -0.5 } }, data.displayTotal), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.5)" } }, data.sessionCount, " session", data.sessionCount !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 10, height: 140, marginTop: 20 } }, data.buckets.map((b, i) => /* @__PURE__ */ React.createElement("div", { key: b.label, onClick: barsClickable ? () => timeframe === "week" ? onWeekDayClick(i) : onMonthWeekClick(i) : undefined, title: barsClickable ? timeframe === "week" ? `View ${b.label}` : `View ${b.label}` : undefined, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: barsClickable ? "pointer" : "default" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 32, height: `${Math.max(4, b.minutes / maxMinutes * 104)}px`, borderRadius: 6, background: b.minutes === maxMinutes && maxMinutes > 0 ? accentHex : `${accentHex}45`, transition: "height .3s ease" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,0.4)" } }, b.label)))), barsClickable && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.35)", textAlign: "center" } }, timeframe === "week" ? "Click a day to open it" : "Click a week to open it")), /* @__PURE__ */ React.createElement("div", { style: { ...GLASS, borderRadius: 18, padding: "8px 10px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.8, padding: "10px 10px 6px" } }, "By task"), data.taskBreakdown.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: "26px 12px", textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12.5 } }, "No focus sessions logged for this ", timeframe, " yet \u2014 finish a pomodoro to see it here."), data.taskBreakdown.map((task, i) => {
+    const barsClickable = timeframe === "week" || timeframe === "month" || timeframe === "day";
+    return /* @__PURE__ */ React.createElement("div", { className: "pf-scroll", style: { position: "absolute", inset: 0, background: "#0a0a0b", color: "#fff", overflowY: "auto", zIndex: 50 } }, /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 720, margin: "0 auto", padding: "26px 20px 60px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: onBack, style: { ...pillMiniBtn, width: 34, height: 34, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ArrowLeft, { size: 16 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700 } }, "Progress"), /* @__PURE__ */ React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 4, ...GLASS_RAISED, borderRadius: 999, padding: 4 } }, ["day", "week", "month"].map((t) => /* @__PURE__ */ React.createElement("button", { key: t, onClick: () => setTimeframeSafe(t), style: { border: "none", cursor: "pointer", padding: "6px 15px", borderRadius: 999, fontSize: 12, fontWeight: 600, textTransform: "capitalize", color: timeframe === t ? "#04140d" : "rgba(255,255,255,0.6)", background: timeframe === t ? accentHex : "transparent" } }, t)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: () => shiftPeriod(-1), title: "Previous", style: { ...pillMiniBtn, width: 32, height: 32, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ChevronLeft, { size: 16 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, color: "rgba(255,255,255,0.85)", minWidth: 180, textAlign: "center", fontVariantNumeric: "tabular-nums" } }, periodLabel), /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: () => shiftPeriod(1), title: "Next", style: { ...pillMiniBtn, width: 32, height: 32, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ChevronRight, { size: 16 }))), /* @__PURE__ */ React.createElement("div", { style: { ...GLASS, borderRadius: 18, padding: "20px 22px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 } }, "Total focus time", data.periodFilterLabel ? ` \u00B7 ${data.periodFilterLabel}` : ""), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 36, fontWeight: 800, letterSpacing: -0.5 } }, data.displayTotal), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.5)" } }, data.sessionCount, " session", data.sessionCount !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 10, height: 160, marginTop: 20 } }, data.buckets.map((b, i) => {
+      const isSelected = timeframe === "day" && selectedPeriod === i;
+      const isClickable = barsClickable;
+      return /* @__PURE__ */ React.createElement("div", { key: b.label, onClick: isClickable ? () => timeframe === "week" ? onWeekDayClick(i) : timeframe === "month" ? onMonthWeekClick(i) : onDayPeriodClick(i) : undefined, title: timeframe === "week" ? `View ${b.label}` : timeframe === "month" ? `View ${b.label}` : timeframe === "day" ? (isSelected ? "Show full day" : `Filter to ${b.label}`) : undefined, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: isClickable ? "pointer" : "default", opacity: timeframe === "day" && selectedPeriod != null && !isSelected ? 0.45 : 1, transition: "opacity .2s ease" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: isSelected ? accentHex : "rgba(255,255,255,0.55)", minHeight: 14 } }, b.minutes > 0 ? formatMinutes(b.minutes) : ""), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 36, height: `${Math.max(4, b.minutes / maxMinutes * 110)}px`, borderRadius: 6, background: isSelected || b.minutes === maxMinutes && maxMinutes > 0 ? accentHex : `${accentHex}45`, boxShadow: isSelected ? `0 0 12px ${accentHex}66` : "none", transition: "height .3s ease, background .2s ease, box-shadow .2s ease" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: isSelected ? accentHex : "rgba(255,255,255,0.4)", fontWeight: isSelected ? 700 : 400 } }, b.label));
+    })), barsClickable && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, fontSize: 11, color: "rgba(255,255,255,0.35)", textAlign: "center" } }, timeframe === "week" ? "Click a day to open it" : timeframe === "month" ? "Click a week to open it" : selectedPeriod != null ? "Click the period again to show the full day" : "Click a period to filter by time of day")), /* @__PURE__ */ React.createElement("div", { style: { ...GLASS, borderRadius: 18, padding: "8px 10px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.8, padding: "10px 10px 6px" } }, "By task", data.periodFilterLabel ? ` \u00B7 ${data.periodFilterLabel}` : ""), data.taskBreakdown.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: "26px 12px", textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12.5 } }, "No focus sessions logged for this ", timeframe, data.periodFilterLabel ? ` (${data.periodFilterLabel})` : "", " yet \u2014 finish a pomodoro to see it here."), data.taskBreakdown.map((task, i) => {
       const pct = Math.round(task.time / (data.totalMinutes || 1) * 100);
       return /* @__PURE__ */ React.createElement("div", { key: task.name, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 10px", borderBottom: i !== data.taskBreakdown.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: 999, background: TASK_DOT_COLORS[i % TASK_DOT_COLORS.length], flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, task.name), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, height: 4, borderRadius: 999, background: "rgba(255,255,255,0.06)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { width: `${pct}%`, height: "100%", background: TASK_DOT_COLORS[i % TASK_DOT_COLORS.length] } }))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: accentHex, flexShrink: 0 } }, formatMinutes(task.time)));
     }))));
