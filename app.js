@@ -26,6 +26,7 @@
   var Play = (p) => /* @__PURE__ */ React.createElement(Icon, { ...p }, /* @__PURE__ */ React.createElement("polygon", { points: "6 3 20 12 6 21 6 3" }));
   var Pause = (p) => /* @__PURE__ */ React.createElement(Icon, { ...p }, /* @__PURE__ */ React.createElement("rect", { x: "14", y: "4", width: "4", height: "16" }), /* @__PURE__ */ React.createElement("rect", { x: "6", y: "4", width: "4", height: "16" }));
   var ChevronRight = (p) => /* @__PURE__ */ React.createElement(Icon, { ...p }, /* @__PURE__ */ React.createElement("path", { d: "m9 18 6-6-6-6" }));
+  var ChevronLeft = (p) => /* @__PURE__ */ React.createElement(Icon, { ...p }, /* @__PURE__ */ React.createElement("path", { d: "m15 18-6-6 6-6" }));
   var X = (p) => /* @__PURE__ */ React.createElement(Icon, { ...p }, /* @__PURE__ */ React.createElement("path", { d: "M18 6 6 18" }), /* @__PURE__ */ React.createElement("path", { d: "m6 6 12 12" }));
   var Plus = (p) => /* @__PURE__ */ React.createElement(Icon, { ...p }, /* @__PURE__ */ React.createElement("path", { d: "M5 12h14" }), /* @__PURE__ */ React.createElement("path", { d: "M12 5v14" }));
   var Flame = (p) => /* @__PURE__ */ React.createElement(Icon, { ...p }, /* @__PURE__ */ React.createElement("path", { d: "M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" }));
@@ -492,20 +493,59 @@
   }
   function ProgressPage({ sessions, accentHex, onBack }) {
     const [timeframe, setTimeframe] = useState("week");
-    const data = useMemo(() => {
-      const now = /* @__PURE__ */ new Date();
-      let from;
-      if (timeframe === "day") {
-        from = new Date(now);
-        from.setHours(0, 0, 0, 0);
-      } else if (timeframe === "week") {
-        from = new Date(now);
-        from.setDate(now.getDate() - now.getDay());
-        from.setHours(0, 0, 0, 0);
+    const [anchorDate, setAnchorDate] = useState(() => {
+      const d = /* @__PURE__ */ new Date();
+      d.setHours(0, 0, 0, 0);
+      return d;
+    });
+    const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const getRange = (anchor, tf) => {
+      const from = new Date(anchor);
+      from.setHours(0, 0, 0, 0);
+      let to;
+      if (tf === "day") {
+        to = new Date(from);
+        to.setDate(to.getDate() + 1);
+      } else if (tf === "week") {
+        from.setDate(from.getDate() - from.getDay());
+        to = new Date(from);
+        to.setDate(to.getDate() + 7);
       } else {
-        from = new Date(now.getFullYear(), now.getMonth(), 1);
+        from.setDate(1);
+        to = new Date(from.getFullYear(), from.getMonth() + 1, 1);
       }
-      const filtered = sessions.filter((s) => new Date(s.timestamp) >= from);
+      return { from, to };
+    };
+    const periodLabel = useMemo(() => {
+      const { from, to } = getRange(anchorDate, timeframe);
+      if (timeframe === "day") {
+        return `${WEEKDAY_SHORT[from.getDay()]}, ${SHORT_MONTHS[from.getMonth()]} ${from.getDate()}, ${from.getFullYear()}`;
+      }
+      if (timeframe === "week") {
+        const end = new Date(to);
+        end.setDate(end.getDate() - 1);
+        return `${SHORT_MONTHS[from.getMonth()]} ${from.getDate()} \u2013 ${SHORT_MONTHS[end.getMonth()]} ${end.getDate()}, ${from.getFullYear()}`;
+      }
+      return `${MONTH_NAMES[from.getMonth()]} ${from.getFullYear()}`;
+    }, [anchorDate, timeframe]);
+    const shiftPeriod = (dir) => {
+      setAnchorDate((prev) => {
+        const d = new Date(prev);
+        if (timeframe === "day") d.setDate(d.getDate() + dir);
+        else if (timeframe === "week") d.setDate(d.getDate() + dir * 7);
+        else d.setMonth(d.getMonth() + dir);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      });
+    };
+    const data = useMemo(() => {
+      const { from, to } = getRange(anchorDate, timeframe);
+      const filtered = sessions.filter((s) => {
+        const t = new Date(s.timestamp);
+        return t >= from && t < to;
+      });
       const taskTotals = filtered.reduce((acc, s) => {
         acc[s.taskName] = (acc[s.taskName] || 0) + s.durationMinutes;
         return acc;
@@ -535,9 +575,9 @@
         taskBreakdown: Object.entries(taskTotals).map(([name, time]) => ({ name, time })).sort((a, b) => b.time - a.time),
         buckets
       };
-    }, [sessions, timeframe]);
+    }, [sessions, timeframe, anchorDate]);
     const maxMinutes = Math.max(1, ...data.buckets.map((b) => b.minutes));
-    return /* @__PURE__ */ React.createElement("div", { className: "pf-scroll", style: { position: "absolute", inset: 0, background: "#0a0a0b", color: "#fff", overflowY: "auto", zIndex: 50 } }, /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 720, margin: "0 auto", padding: "26px 20px 60px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 22 } }, /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: onBack, style: { ...pillMiniBtn, width: 34, height: 34, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ArrowLeft, { size: 16 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700 } }, "Progress"), /* @__PURE__ */ React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 4, ...GLASS_RAISED, borderRadius: 999, padding: 4 } }, ["day", "week", "month"].map((t) => /* @__PURE__ */ React.createElement("button", { key: t, onClick: () => setTimeframe(t), style: { border: "none", cursor: "pointer", padding: "6px 15px", borderRadius: 999, fontSize: 12, fontWeight: 600, textTransform: "capitalize", color: timeframe === t ? "#04140d" : "rgba(255,255,255,0.6)", background: timeframe === t ? accentHex : "transparent" } }, t)))), /* @__PURE__ */ React.createElement("div", { style: { ...GLASS, borderRadius: 18, padding: "20px 22px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 } }, "Total focus time"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 36, fontWeight: 800, letterSpacing: -0.5 } }, data.displayTotal), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.5)" } }, data.sessionCount, " session", data.sessionCount !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 10, height: 140, marginTop: 20 } }, data.buckets.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.label, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 32, height: `${Math.max(4, b.minutes / maxMinutes * 104)}px`, borderRadius: 6, background: b.minutes === maxMinutes && maxMinutes > 0 ? accentHex : `${accentHex}45`, transition: "height .3s ease" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,0.4)" } }, b.label))))), /* @__PURE__ */ React.createElement("div", { style: { ...GLASS, borderRadius: 18, padding: "8px 10px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.8, padding: "10px 10px 6px" } }, "By task"), data.taskBreakdown.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: "26px 12px", textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12.5 } }, "No focus sessions logged for this ", timeframe, " yet \u2014 finish a pomodoro to see it here."), data.taskBreakdown.map((task, i) => {
+    return /* @__PURE__ */ React.createElement("div", { className: "pf-scroll", style: { position: "absolute", inset: 0, background: "#0a0a0b", color: "#fff", overflowY: "auto", zIndex: 50 } }, /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 720, margin: "0 auto", padding: "26px 20px 60px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: onBack, style: { ...pillMiniBtn, width: 34, height: 34, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ArrowLeft, { size: 16 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700 } }, "Progress"), /* @__PURE__ */ React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 4, ...GLASS_RAISED, borderRadius: 999, padding: 4 } }, ["day", "week", "month"].map((t) => /* @__PURE__ */ React.createElement("button", { key: t, onClick: () => setTimeframe(t), style: { border: "none", cursor: "pointer", padding: "6px 15px", borderRadius: 999, fontSize: 12, fontWeight: 600, textTransform: "capitalize", color: timeframe === t ? "#04140d" : "rgba(255,255,255,0.6)", background: timeframe === t ? accentHex : "transparent" } }, t)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: () => shiftPeriod(-1), title: "Previous", style: { ...pillMiniBtn, width: 32, height: 32, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ChevronLeft, { size: 16 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, color: "rgba(255,255,255,0.85)", minWidth: 180, textAlign: "center", fontVariantNumeric: "tabular-nums" } }, periodLabel), /* @__PURE__ */ React.createElement("button", { className: "pf-mini-btn", onClick: () => shiftPeriod(1), title: "Next", style: { ...pillMiniBtn, width: 32, height: 32, background: "rgba(255,255,255,0.06)" } }, /* @__PURE__ */ React.createElement(ChevronRight, { size: 16 }))), /* @__PURE__ */ React.createElement("div", { style: { ...GLASS, borderRadius: 18, padding: "20px 22px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 } }, "Total focus time"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 36, fontWeight: 800, letterSpacing: -0.5 } }, data.displayTotal), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.5)" } }, data.sessionCount, " session", data.sessionCount !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 10, height: 140, marginTop: 20 } }, data.buckets.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.label, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 32, height: `${Math.max(4, b.minutes / maxMinutes * 104)}px`, borderRadius: 6, background: b.minutes === maxMinutes && maxMinutes > 0 ? accentHex : `${accentHex}45`, transition: "height .3s ease" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,0.4)" } }, b.label))))), /* @__PURE__ */ React.createElement("div", { style: { ...GLASS, borderRadius: 18, padding: "8px 10px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.8, padding: "10px 10px 6px" } }, "By task"), data.taskBreakdown.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: "26px 12px", textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12.5 } }, "No focus sessions logged for this ", timeframe, " yet \u2014 finish a pomodoro to see it here."), data.taskBreakdown.map((task, i) => {
       const pct = Math.round(task.time / (data.totalMinutes || 1) * 100);
       return /* @__PURE__ */ React.createElement("div", { key: task.name, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 10px", borderBottom: i !== data.taskBreakdown.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: 999, background: TASK_DOT_COLORS[i % TASK_DOT_COLORS.length], flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, task.name), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, height: 4, borderRadius: 999, background: "rgba(255,255,255,0.06)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { width: `${pct}%`, height: "100%", background: TASK_DOT_COLORS[i % TASK_DOT_COLORS.length] } }))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: accentHex, flexShrink: 0 } }, formatMinutes(task.time)));
     }))));
